@@ -31,16 +31,25 @@ const STEPS = {
     description: 'La feuille est **rouge**.\n\n✅ Appliquez la **procédure normale** et la peine correspondante.',
   },
 
-  // ══ BRANCHE VERTE — Q1 : Crime ou refus ? ══
+  // ══ BRANCHE VERTE — Q1 : Y a-t-il un crime ? ══
   verte_crime: {
-    question: '🟢 Feuille **verte** détectée.\n\n**Y a-t-il un crime OU l\'individu refuse-t-il les chefs d\'inculpation ?**',
+    question: '🟢 Feuille **verte** détectée.\n\n**Y a-t-il un crime ?**',
     buttons: [
-      { id: 'oui_crime', label: '✅ Oui (crime ou refus)', style: ButtonStyle.Danger, next: 'appel_procureur' },
-      { id: 'non_crime', label: '❌ Non (accepte + pas de crime)', style: ButtonStyle.Success, next: 'sans_procureur' },
+      { id: 'crime_oui', label: '✅ Oui, il y a un crime', style: ButtonStyle.Danger, next: 'appel_procureur_crime' },
+      { id: 'crime_non', label: '❌ Non, pas de crime', style: ButtonStyle.Success, next: 'verte_accepte' },
     ]
   },
 
-  // NON → procédure sans procureur
+  // ══ BRANCHE VERTE — Q2 : Individu accepte les chefs ? ══
+  verte_accepte: {
+    question: '🟢 Pas de crime.\n\n**L\'individu accepte-t-il les chefs d\'inculpation ?**',
+    buttons: [
+      { id: 'accepte_oui', label: '✅ Oui, il accepte', style: ButtonStyle.Success, next: 'sans_procureur' },
+      { id: 'accepte_non', label: '❌ Non, il refuse', style: ButtonStyle.Danger, next: 'appel_procureur_sans_crime' },
+    ]
+  },
+
+  // Accepte + pas de crime → sans procureur
   sans_procureur: {
     result: true,
     color: 0x2ECC71,
@@ -48,12 +57,21 @@ const STEPS = {
     description: 'L\'individu **accepte** les chefs d\'inculpation et il n\'y a **pas de crime**.\n\n✅ Appliquez la peine directement, **sans procureur**.',
   },
 
-  // OUI → appel procureur
-  appel_procureur: {
-    question: '⚖️ **Crime détecté ou refus des chefs d\'inculpation.**\n\nUn **procureur** est-il disponible ?',
+  // ══ CAS CRIME : appel procureur ══
+  appel_procureur_crime: {
+    question: '🚨 **Crime détecté.**\n\nUn **procureur** est-il disponible ?\n\n⚠️ En cas d\'indisponibilité, le CS ne peut pas gérer un crime.',
     buttons: [
-      { id: 'proc_oui', label: '✅ Procureur disponible', style: ButtonStyle.Success, next: 'procureur_verdict' },
-      { id: 'proc_non', label: '❌ Procureur indisponible', style: ButtonStyle.Danger, next: 'bracelet_crime' },
+      { id: 'proc_crime_oui', label: '✅ Procureur disponible', style: ButtonStyle.Success, next: 'procureur_verdict' },
+      { id: 'proc_crime_non', label: '❌ Procureur indisponible', style: ButtonStyle.Danger, next: 'bracelet_crime' },
+    ]
+  },
+
+  // ══ CAS REFUS SANS CRIME : appel procureur ══
+  appel_procureur_sans_crime: {
+    question: '⚖️ **L\'individu refuse les chefs d\'inculpation** (pas de crime).\n\nUn **procureur** est-il disponible ?',
+    buttons: [
+      { id: 'proc_sc_oui', label: '✅ Procureur disponible', style: ButtonStyle.Success, next: 'procureur_verdict' },
+      { id: 'proc_sc_non', label: '❌ Procureur indisponible', style: ButtonStyle.Danger, next: 'appel_cs' },
     ]
   },
 
@@ -65,17 +83,17 @@ const STEPS = {
     description: 'Le **procureur** est disponible.\n\n✅ Laissez le procureur statuer et **appliquez la peine** prononcée.',
   },
 
-  // Procureur indispo + crime/refus → bracelet direct (CS interdit)
+  // Procureur indispo + CRIME → bracelet direct
   bracelet_crime: {
     result: true,
     color: 0xE67E22,
     title: '🚨 Procédure bracelet',
-    description: 'Le **procureur est indisponible** et il s\'agit d\'un crime ou d\'un refus des chefs.\n\n⛔ Le Command Staff **ne peut pas gérer** cette situation.\n\n🔒 Appliquez la **procédure bracelet**.',
+    description: 'Le **procureur est indisponible** et il s\'agit d\'un **crime**.\n\n⛔ Le Command Staff **ne peut pas gérer** un crime.\n\n🔒 Appliquez la **procédure bracelet**.',
   },
 
-  // ══ CAS SANS CRIME : procureur indispo → appel CS ══
+  // ══ CAS REFUS SANS CRIME + procureur indispo : appel CS ══
   appel_cs: {
-    question: '🟣 Le procureur est indisponible et il n\'y a **pas de crime**.\n\nUn **Command Staff** est-il disponible ?',
+    question: '🟣 Le procureur est indisponible.\n\nUn **Command Staff** est-il disponible ?\n\n*(Pas de crime — le CS peut gérer)*',
     buttons: [
       { id: 'cs_oui', label: '✅ CS disponible', style: ButtonStyle.Success, next: 'cs_verdict' },
       { id: 'cs_non', label: '❌ CS indisponible', style: ButtonStyle.Danger, next: 'bracelet_cs' },
@@ -174,18 +192,10 @@ client.on('interactionCreate', async (interaction) => {
   const step = STEPS[currentStep];
   if (!step || !step.buttons) return;
 
-  // Trouver le bouton cliqué
   const clicked = step.buttons.find(b => b.id === interaction.customId);
   if (!clicked) return;
 
-  // Cas spécial : procureur indispo sans crime → appel CS
-  let nextKey = clicked.next;
-  if (clicked.id === 'proc_non') {
-    // On vérifie si on vient d'un contexte sans crime (non gérable)
-    // La logique bracelet_crime est déjà correcte par défaut
-    nextKey = 'bracelet_crime';
-  }
-
+  const nextKey = clicked.next;
   const nextStep = STEPS[nextKey];
   if (!nextStep) return;
 
